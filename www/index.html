@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" href="data:," />
+    <title>狸哩 App 原型</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: #060a18;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+        overflow: hidden;
+      }
+
+      /* 16:9 stage, fits any screen without cropping or stretching */
+      .stage {
+        position: relative;
+        width: min(100vw, calc(100dvh * 16 / 9));
+        aspect-ratio: 16 / 9;
+        background: #000;
+        overflow: hidden;
+      }
+      @media (max-aspect-ratio: 16/10) {
+        .stage { width: 100vw; }
+      }
+
+      .stage video {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+      .stage video {
+        z-index: 1;
+        opacity: 0;
+        /* the crossfade itself */
+        transition: opacity 1.6s ease-in-out;
+        will-change: opacity;
+      }
+      .stage video.on { opacity: 1; }
+
+      /* tap-to-play fallback, only shown if autoplay is blocked */
+      .play-veil {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(4, 8, 20, 0.35);
+        border: 0;
+        cursor: pointer;
+        min-height: 2rem;
+      }
+      .play-veil.show { display: flex; }
+      .play-veil span {
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        background: rgba(10, 16, 34, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .play-veil svg { width: 30px; height: 30px; fill: #fff; margin-left: 4px; }
+
+      /* small caption so the viewer knows what they're looking at */
+      .hint {
+        position: absolute;
+        left: 12px;
+        bottom: 10px;
+        z-index: 2;
+        color: rgba(255, 255, 255, 0.85);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage" id="stage">
+      <video id="vidA" muted autoplay playsinline preload="auto"></video>
+      <video id="vidB" muted autoplay playsinline preload="auto"></video>
+      <div class="hint">视频 1 ⇄ 视频 2 · 淡入淡出循环</div>
+      <button class="play-veil" id="playVeil" type="button" aria-label="播放">
+        <span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.8v16.4c0 .9 1 1.5 1.8 1L21 13a1.2 1.2 0 0 0 0-2L7.8 2.9C7 2.4 6 3 6 3.8z"/></svg>
+        </span>
+      </button>
+    </div>
+
+    <script>
+      (function () {
+        var CLIPS = ["video1.mp4", "video2.mp4"];
+        var FADE = 1.6; // seconds — matches the CSS transition
+
+        var vids = [document.getElementById("vidA"), document.getElementById("vidB")];
+        var veil = document.getElementById("playVeil");
+
+        var active = 0;      // index into vids
+        var clipIndex = 0;   // index into CLIPS for the active video
+        var switching = false;
+
+        function setClip(v, src) {
+          // set the muted *property* (not just the attribute) before loading:
+          // phone webviews only allow autoplay when the element is truly
+          // muted at load time, and a JS-assigned src can lose the attribute
+          v.muted = true;
+          v.defaultMuted = true;
+          if (v.getAttribute("src") !== src) {
+            v.src = src;
+            v.load();
+          }
+        }
+
+        function startNext() {
+          if (switching) return;
+          switching = true;
+          var cur = vids[active];
+          var nxt = vids[1 - active];
+          clipIndex = (clipIndex + 1) % CLIPS.length;
+          setClip(nxt, CLIPS[clipIndex]);
+          nxt.currentTime = 0;
+          var p = nxt.play();
+          if (p && p.catch) p.catch(function () {});
+          // fade: incoming on top fading in, outgoing fading out beneath it
+          nxt.style.zIndex = 2;
+          cur.style.zIndex = 1;
+          nxt.classList.add("on");
+          cur.classList.remove("on");
+          active = 1 - active;
+          setTimeout(function () {
+            cur.pause();
+            switching = false;
+          }, FADE * 1000 + 120);
+        }
+
+        vids.forEach(function (v) {
+          v.addEventListener("timeupdate", function () {
+            if (v !== vids[active] || switching) return;
+            if (v.duration && v.duration - v.currentTime <= FADE) startNext();
+          });
+          v.addEventListener("ended", function () {
+            if (v === vids[active]) startNext();
+          });
+        });
+
+        // start: first clip fades in
+        setClip(vids[0], CLIPS[0]);
+        vids[0].style.zIndex = 2;
+        var p0 = vids[0].play();
+        function onStarted() { vids[0].classList.add("on"); veil.classList.remove("show"); }
+        if (p0 && p0.then) {
+          p0.then(onStarted).catch(function () { veil.classList.add("show"); });
+        } else {
+          onStarted();
+        }
+
+        veil.addEventListener("click", function () {
+          var p = vids[active].play();
+          if (p && p.then) p.then(onStarted).catch(function () {});
+          else onStarted();
+        });
+      })();
+    </script>
+  </body>
+</html>
